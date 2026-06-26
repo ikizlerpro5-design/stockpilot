@@ -1,0 +1,11 @@
+# StockPilot - Web Deployment Requirements
+# pywebview HARIC (sadece masaustu icin)
+
+flask>=3.0
+flask-cors>=4.0
+yfinance>=0.2.40
+pandas>=2.0
+numpy>=1.24
+vaderSentiment>=3.3
+requests>=2.31
+gunicorn>=22.0

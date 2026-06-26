@@ -1,0 +1,16 @@
+# StockPilot - .gitignore
+__pycache__/
+*.pyc
+*.pyo
+*.db
+*.exe
+*.spec
+build/
+dist/
+.env
+*.log
+stockpilot_debug.log
+.venv/
+venv/
+.vscode/
+*.egg-info/

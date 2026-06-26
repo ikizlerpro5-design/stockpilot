@@ -1,0 +1,25 @@
+# Render.com Deployment Configuration
+# https://dashboard.render.com
+
+services:
+  - type: web
+    name: stockpilot
+    env: python
+    region: frankfurt  # Avrupa (Turkiye'ye yakin)
+    buildCommand: pip install -r requirements_web.txt
+    startCommand: gunicorn wsgi:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    plan: free
+    
+    envVars:
+      - key: FLASK_SECRET_KEY
+        generateValue: true
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: TZ
+        value: Europe/Istanbul
+    
+    # SQLite veritabani icin kalici disk (Render'da /var/data)
+    disk:
+      name: stockpilot-data
+      mountPath: /var/data
+      sizeGB: 1
