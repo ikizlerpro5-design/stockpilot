@@ -7,7 +7,7 @@ window.StockPilot = (function () {
 
   // --- State ---
   const state = {
-    currentPage: 'dashboard',
+    currentPage: null,
     currentSymbol: null,
     analysisData: null,
     watchlist: [],
@@ -91,7 +91,10 @@ window.StockPilot = (function () {
     updateTimeDisplay();
     setInterval(updateTimeDisplay, 1000);
 
-    // Update BIST indicator
+    // === WEBSOCKET — Anlık Canlı Veri ===
+    connectWebSocket();
+    
+    // İlk yükleme için bir kere API'den çek (socket bağlanana kadar)
     updateBistIndicator();
 
     // Route from hash
@@ -123,13 +126,11 @@ window.StockPilot = (function () {
 
   // --- Navigation ---
   function navigate(page, fromHash) {
-    // Destroy existing charts
     StockPilotCharts.destroyAll();
-
     state.currentPage = page;
 
-    // Update nav active state
-    document.querySelectorAll('.nav-item').forEach(item => {
+    // Update top nav active state
+    document.querySelectorAll('.sp-nav-link').forEach(item => {
       item.classList.toggle('active', item.dataset.page === page);
     });
 
@@ -137,9 +138,6 @@ window.StockPilot = (function () {
     if (!fromHash) {
       window.location.hash = page;
     }
-
-    // Close sidebar on mobile
-    closeSidebar();
 
     // Render page
     switch (page) {
@@ -163,6 +161,9 @@ window.StockPilot = (function () {
         break;
       case 'signals':
         renderSignalsRoute();
+        break;
+      case 'compare':
+        renderCompareRoute();
         break;
       case 'markets':
         renderMarketsPage();
@@ -198,26 +199,8 @@ window.StockPilot = (function () {
       ` : '';
 
     pageContent.innerHTML = `
-      <!-- Hero -->
-      <div class="hero-section anim-fade-in">
-        <h1 class="hero-title">StockPilot</h1>
-        <p class="hero-subtitle">Borsa İstanbul Akıllı Analiz Platformu</p>
-      </div>
-
-      <!-- Quick Search -->
-      <div class="quick-search-section anim-fade-in stagger-1">
-        <div class="quick-search-bar">
-          <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="11" cy="11" r="8"></circle>
-            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-          </svg>
-          <input type="text" id="quickSearchInput" placeholder="BIST hisse kodu girin... (örn: THYAO)" autocomplete="off"
-                 onkeydown="if(event.key==='Enter'){window.StockPilot.analyzeStock(this.value.toUpperCase().trim()); this.value='';}">
-        </div>
-      </div>
-
       <!-- Market Overview -->
-      <div class="anim-fade-in stagger-2">
+      <div class="anim-fade-in">
         <div class="section-header">
           <h2 class="section-title"><span class="icon">📊</span> Piyasa Özeti</h2>
         </div>
@@ -297,8 +280,23 @@ window.StockPilot = (function () {
         </div>
       </div>
 
+      <!-- Canli Sinyaller -->
+      <div class="mt-32 anim-fade-in stagger-5">
+        <div class="section-header">
+          <h2 class="section-title"><span class="icon">⚡</span> Canli Al/Sat Sinyalleri</h2>
+          <span style="font-size:0.7rem;color:var(--text-muted);">Kademe analizi • 3sn guncelleme</span>
+        </div>
+        <div id="dashSignalsWidget">
+          <div class="an-empty-inline">📡 Sinyaller yukleniyor...</div>
+        </div>
+      </div>
+
       ${recentChips}
     `;
+
+    // Load signals + dashboard data
+    loadDashboardSignals();
+    setInterval(loadDashboardSignals, 5000);
 
     // Render mini charts and update indicators after DOM
     requestAnimationFrame(async () => {
@@ -315,6 +313,48 @@ window.StockPilot = (function () {
           StockPilotCharts.createMiniChart('usdMiniChart', StockPilotCharts.generateMockLineData(30, data.usdtry ? data.usdtry.deger : 38.5, isUsdUp ? 'up' : 'down'), isUsdUp);
           StockPilotCharts.createMiniChart('eurMiniChart', StockPilotCharts.generateMockLineData(30, data.eurtry ? data.eurtry.deger : 42.0, isEurUp ? 'up' : 'down'), isEurUp);
           StockPilotCharts.createMiniChart('goldMiniChart', StockPilotCharts.generateMockLineData(30, data.altin ? data.altin.deger : 3100, isGoldUp ? 'up' : 'down'), isGoldUp);
+
+          // Update dashboard card values directly from fetched data
+          const dbBist = document.getElementById('dashBistValue');
+          const dbBistChg = document.getElementById('dashBistChange');
+          if (data.xu100) {
+            if (dbBist) dbBist.textContent = formatNumber(data.xu100.deger);
+            if (dbBistChg) {
+              const pre = data.xu100.degisim >= 0 ? '▲ +' : '▼ ';
+              dbBistChg.textContent = `${pre}${Math.abs(data.xu100.degisim_yuzde).toFixed(2)}%`;
+              dbBistChg.className = `market-change-label ${data.xu100.degisim >= 0 ? 'up' : 'down'}`;
+            }
+          }
+          const dbUsd = document.getElementById('dashUsdValue');
+          const dbUsdChg = document.getElementById('dashUsdChange');
+          if (data.usdtry) {
+            if (dbUsd) dbUsd.textContent = '₺' + formatNumber(data.usdtry.deger);
+            if (dbUsdChg) {
+              const pre = data.usdtry.degisim >= 0 ? '▲ +' : '▼ ';
+              dbUsdChg.textContent = `${pre}${Math.abs(data.usdtry.degisim_yuzde).toFixed(2)}%`;
+              dbUsdChg.className = `market-change-label ${data.usdtry.degisim >= 0 ? 'up' : 'down'}`;
+            }
+          }
+          const dbEur = document.getElementById('dashEurValue');
+          const dbEurChg = document.getElementById('dashEurChange');
+          if (data.eurtry) {
+            if (dbEur) dbEur.textContent = '₺' + formatNumber(data.eurtry.deger);
+            if (dbEurChg) {
+              const pre = data.eurtry.degisim >= 0 ? '▲ +' : '▼ ';
+              dbEurChg.textContent = `${pre}${Math.abs(data.eurtry.degisim_yuzde).toFixed(2)}%`;
+              dbEurChg.className = `market-change-label ${data.eurtry.degisim >= 0 ? 'up' : 'down'}`;
+            }
+          }
+          const dbGold = document.getElementById('dashGoldValue');
+          const dbGoldChg = document.getElementById('dashGoldChange');
+          if (data.altin) {
+            if (dbGold) dbGold.textContent = '₺' + formatNumber(data.altin.deger);
+            if (dbGoldChg) {
+              const pre = data.altin.degisim >= 0 ? '▲ +' : '▼ ';
+              dbGoldChg.textContent = `${pre}${Math.abs(data.altin.degisim_yuzde).toFixed(2)}%`;
+              dbGoldChg.className = `market-change-label ${data.altin.degisim >= 0 ? 'up' : 'down'}`;
+            }
+          }
         }
       } catch (e) {
         StockPilotCharts.createMiniChart('bistMiniChart', StockPilotCharts.generateMockLineData(30, 10500, 'up'), true);
@@ -348,12 +388,6 @@ window.StockPilot = (function () {
   }
 
   function renderTopPicks() {
-    const domains = {
-      THYAO: "turkishairlines.com",
-      ASELS: "aselsan.com.tr",
-      EREGL: "erdemir.com.tr"
-    };
-
     const picks = [
       { symbol: 'THYAO', name: 'Türk Hava Yolları', price: 312.40, changePercent: 3.25, action: 'AL', confidence: 87 },
       { symbol: 'ASELS', name: 'Aselsan', price: 94.70, changePercent: 1.80, action: 'AL', confidence: 82 },
@@ -365,14 +399,17 @@ window.StockPilot = (function () {
       const changeIcon = p.changePercent >= 0 ? '▲' : '▼';
       const actionBadge = getActionBadgeClass(p.action);
       const confColor = p.action === 'AL' ? 'green' : p.action === 'SAT' ? 'red' : 'yellow';
-      const badgeStyle = getBadgeStyle(p.symbol);
-      const logoUrl = `https://www.google.com/s2/favicons?sz=128&domain=${domains[p.symbol]}`;
+      const initials = p.symbol.substring(0, 2);
+      // Generate a stable color from symbol name
+      let hash = 0;
+      for (let i = 0; i < p.symbol.length; i++) hash = p.symbol.charCodeAt(i) + ((hash << 5) - hash);
+      const hue = Math.abs(hash % 360);
 
       return `
         <div class="glass-card stock-card" onclick="window.StockPilot.analyzeStock('${p.symbol}')">
           <div class="stock-card-header" style="display:flex; align-items:center; gap: 12px; margin-bottom:12px;">
-            <div style="width: 36px; height: 36px; border-radius: 8px; background:#12121e; border:1px solid rgba(255,255,255,0.06); display:flex; align-items:center; justify-content:center; overflow:hidden; flex-shrink:0;">
-              <img src="${logoUrl}" alt="${p.symbol}" style="width:70%; height:70%; object-fit:contain;" onerror="this.parentElement.innerHTML='${p.symbol.substring(0, 2)}'; this.parentElement.style.cssText='width: 36px; height: 36px; border-radius: 8px; flex-shrink: 0; ${badgeStyle}';">
+            <div class="stock-logo" style="width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,hsl(${hue},60%,35%),hsl(${(hue+40)%360},70%,25%));display:flex;align-items:center;justify-content:center;flex-shrink:0;font-weight:700;font-size:0.7rem;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,0.4);">
+              ${initials}
             </div>
             <div style="flex:1; min-width:0;">
               <div class="stock-symbol" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${p.symbol}</div>
@@ -396,6 +433,64 @@ window.StockPilot = (function () {
         </div>
       `;
     }).join('');
+  }
+
+  function loadDashboardSignals() {
+    const el = document.getElementById('dashSignalsWidget');
+    if (!el) return;
+    fetch('/api/signals/live')
+      .then(r => r.json())
+      .then(data => {
+        if (!data.success || !data.signals || !Object.keys(data.signals).length) {
+          el.innerHTML = '<div class="an-empty-inline">🔍 Henuz sinyal yok. Watchlist\'e hisse ekleyin.</div>';
+          return;
+        }
+        let html = '<div class="signal-cards">';
+        for (const [sym, sig] of Object.entries(data.signals)) {
+          const isAnomaly = sig.type === 'ANOMALI';
+          const cls = isAnomaly ? 'signal-anomaly' 
+            : sig.type === 'AL' ? 'signal-al' 
+            : sig.type === 'SAT' ? 'signal-sat' : 'signal-tut';
+          const emoji = isAnomaly ? '⚡' : sig.type === 'AL' ? '🟢' : sig.type === 'SAT' ? '🔴' : '⚪';
+          
+          // Anomali alert'leri
+          let anomalyHtml = '';
+          if (sig.anomalies && sig.anomalies.length > 0) {
+            anomalyHtml = '<div class="signal-anomalies">' +
+              sig.anomalies.map(a => 
+                `<div class="signal-anomaly-item ${a.severity === 'high' ? 'anomaly-high' : a.severity === 'medium' ? 'anomaly-med' : 'anomaly-low'}">${a.msg}</div>`
+              ).join('') +
+              '</div>';
+          }
+          
+          // Trend bilgisi
+          let trendHtml = '';
+          if (sig.trend && sig.trend !== 'notr' && sig.trend !== 'yetersiz_veri') {
+            const trendLabel = sig.trend === 'alis_birikiyor' ? '📈 Alış birikiyor' : '📉 Satış birikiyor';
+            trendHtml = `<div class="signal-trend">${trendLabel}</div>`;
+          }
+          
+          html += `
+            <div class="signal-card ${cls}" onclick="window.StockPilot.analyzeStock('${sym}')">
+              <div class="signal-card-top">
+                <span class="signal-symbol">${sym}</span>
+                <span class="signal-type">${emoji} ${sig.type}</span>
+              </div>
+              <div class="signal-confidence">Guven: %${sig.confidence || 50}</div>
+              ${anomalyHtml}
+              ${trendHtml}
+              <div class="signal-reasons">${(sig.reasons || []).slice(0, 2).join(' • ')}</div>
+              <div class="signal-meta">
+                ${sig.entry ? '<span>Giris: ₺'+sig.entry.toFixed(2)+'</span>' : ''}
+                ${sig.stop ? '<span>Stop: ₺'+sig.stop.toFixed(2)+'</span>' : ''}
+                ${sig.price ? '<span>Fiyat: ₺'+sig.price.toFixed(2)+'</span>' : ''}
+              </div>
+            </div>`;
+        }
+        html += '</div>';
+        el.innerHTML = html;
+      })
+      .catch(() => {});
   }
 
   function renderDashboardNews() {
@@ -466,6 +561,11 @@ window.StockPilot = (function () {
   // --- Signals ---
   function renderSignalsRoute() {
     StockPilotSignals.renderSignalsPage(pageContent);
+  }
+
+  // --- Compare ---
+  function renderCompareRoute() {
+    StockPilotCompare.renderComparePage(pageContent);
   }
 
   // --- Funds ---
@@ -629,11 +729,9 @@ window.StockPilot = (function () {
           </div>
         `;
 
-        const fcEl = document.getElementById('fundsContent');
-        if (fcEl) fcEl.innerHTML = contentHtml;
+        pageContent.innerHTML = contentHtml;
       } else {
-        const fcEl = document.getElementById('fundsContent');
-        if (fcEl) fcEl.innerHTML = `
+        pageContent.innerHTML = `
           <div class="empty-state" style="min-height:40vh;">
             <div class="empty-icon">❌</div>
             <div class="empty-title">Fon Verisi Alınamadı</div>
@@ -642,8 +740,7 @@ window.StockPilot = (function () {
         `;
       }
     } catch (err) {
-      const fcEl = document.getElementById('fundsContent');
-      if (fcEl) fcEl.innerHTML = `
+      pageContent.innerHTML = `
         <div class="empty-state" style="min-height:40vh;">
           <div class="empty-icon">❌</div>
           <div class="empty-title">Bağlantı Hatası</div>
@@ -817,7 +914,7 @@ window.StockPilot = (function () {
           </div>
         `;
 
-        document.getElementById('marketsContent').innerHTML = contentHtml;
+        pageContent.innerHTML = contentHtml;
 
         // Render mini charts
         requestAnimationFrame(() => {
@@ -835,7 +932,7 @@ window.StockPilot = (function () {
           }
         });
       } else {
-        document.getElementById('marketsContent').innerHTML = `
+        pageContent.innerHTML = `
           <div class="empty-state" style="min-height:40vh;">
             <div class="empty-icon">❌</div>
             <div class="empty-title">Piyasa Verisi Alınamadı</div>
@@ -844,7 +941,7 @@ window.StockPilot = (function () {
         `;
       }
     } catch (err) {
-      document.getElementById('marketsContent').innerHTML = `
+      pageContent.innerHTML = `
         <div class="empty-state" style="min-height:40vh;">
           <div class="empty-icon">❌</div>
           <div class="empty-title">Bağlantı Hatası</div>
@@ -864,7 +961,7 @@ window.StockPilot = (function () {
     window.location.hash = `analysis/${symbol}`;
 
     // Update nav
-    document.querySelectorAll('.nav-item').forEach(item => {
+    document.querySelectorAll('.sp-nav-link').forEach(item => {
       item.classList.toggle('active', item.dataset.page === 'analysis');
     });
 
@@ -873,9 +970,6 @@ window.StockPilot = (function () {
 
     // Show loading
     pageContent.innerHTML = StockPilotAnalysis.renderAnalysisSkeleton();
-
-    // Close sidebar on mobile
-    closeSidebar();
 
     // Add to recent searches
     addToRecentSearches(symbol);
@@ -1110,6 +1204,124 @@ window.StockPilot = (function () {
     el.textContent = `${h}:${m}:${s}`;
   }
 
+  // --- WEBSOCKET — Anlık Canlı Veri ---
+  function connectWebSocket() {
+    try {
+      // Sunucuya WebSocket bağlantısı
+      const socket = io(window.location.origin, {
+        transports: ['websocket', 'polling'],
+        reconnection: true,
+        reconnectionDelay: 2000
+      });
+
+      socket.on('connect', () => {
+        console.log('[WS] Bağlandı — canlı veri akışı aktif');
+      });
+
+      socket.on('market_update', (data) => {
+        // Topbar ticker'ları güncelle
+        if (data.bist) {
+          const bv = document.getElementById('bistValue');
+          const bc = document.getElementById('bistChange');
+          if (bv) bv.textContent = formatNumber(data.bist.deger);
+          if (bc) {
+            const p = data.bist.degisim_yuzde >= 0 ? '+' : '';
+            bc.textContent = `${p}${data.bist.degisim_yuzde.toFixed(2)}%`;
+            bc.className = `sp-ticker-change ${data.bist.degisim_yuzde >= 0 ? 'up' : 'down'}`;
+          }
+        }
+        if (data.usd) {
+          const uv = document.getElementById('usdValue');
+          const uc = document.getElementById('usdChange');
+          if (uv) uv.textContent = '₺' + formatNumber(data.usd.deger);
+          if (uc) {
+            const p = data.usd.degisim_yuzde >= 0 ? '+' : '';
+            uc.textContent = `${p}${data.usd.degisim_yuzde.toFixed(2)}%`;
+            uc.className = `sp-ticker-change ${data.usd.degisim_yuzde >= 0 ? 'up' : 'down'}`;
+          }
+        }
+        if (data.altin) {
+          const gv = document.getElementById('goldValue');
+          const gc = document.getElementById('goldChange');
+          if (gv) gv.textContent = '₺' + formatNumber(data.altin.deger);
+          if (gc) {
+            const p = data.altin.degisim_yuzde >= 0 ? '+' : '';
+            gc.textContent = `${p}${data.altin.degisim_yuzde.toFixed(2)}%`;
+            gc.className = `sp-ticker-change ${data.altin.degisim_yuzde >= 0 ? 'up' : 'down'}`;
+          }
+        }
+
+        // Dashboard kartlarını güncelle (eğer dashboard açıksa)
+        if (state.currentPage === 'dashboard') {
+          if (data.bist) {
+            const db = document.getElementById('dashBistValue');
+            const dc = document.getElementById('dashBistChange');
+            if (db) db.textContent = formatNumber(data.bist.deger);
+            if (dc) {
+              const p = data.bist.degisim_yuzde >= 0 ? '▲ +' : '▼ ';
+              dc.textContent = `${p}${Math.abs(data.bist.degisim_yuzde).toFixed(2)}%`;
+              dc.className = `market-change-label ${data.bist.degisim_yuzde >= 0 ? 'up' : 'down'}`;
+            }
+          }
+          if (data.usd) {
+            const du = document.getElementById('dashUsdValue');
+            const dc = document.getElementById('dashUsdChange');
+            if (du) du.textContent = '₺' + formatNumber(data.usd.deger);
+            if (dc) {
+              const p = data.usd.degisim_yuzde >= 0 ? '▲ +' : '▼ ';
+              dc.textContent = `${p}${Math.abs(data.usd.degisim_yuzde).toFixed(2)}%`;
+              dc.className = `market-change-label ${data.usd.degisim_yuzde >= 0 ? 'up' : 'down'}`;
+            }
+          }
+          if (data.eur) {
+            const de = document.getElementById('dashEurValue');
+            const dc = document.getElementById('dashEurChange');
+            if (de) de.textContent = '₺' + formatNumber(data.eur.deger);
+            if (dc) {
+              const p = data.eur.degisim_yuzde >= 0 ? '▲ +' : '▼ ';
+              dc.textContent = `${p}${Math.abs(data.eur.degisim_yuzde).toFixed(2)}%`;
+              dc.className = `market-change-label ${data.eur.degisim_yuzde >= 0 ? 'up' : 'down'}`;
+            }
+          }
+          if (data.altin) {
+            const dg = document.getElementById('dashGoldValue');
+            const dc = document.getElementById('dashGoldChange');
+            if (dg) dg.textContent = '₺' + formatNumber(data.altin.deger);
+            if (dc) {
+              const p = data.altin.degisim_yuzde >= 0 ? '▲ +' : '▼ ';
+              dc.textContent = `${p}${Math.abs(data.altin.degisim_yuzde).toFixed(2)}%`;
+              dc.className = `market-change-label ${data.altin.degisim_yuzde >= 0 ? 'up' : 'down'}`;
+            }
+          }
+        }
+      });
+
+      socket.on('signal_alert', (signal) => {
+        if (!signal || !signal.type || signal.type === 'TUT') return;
+        const emoji = signal.type === 'AL' ? '🟢' : '🔴';
+        const msg = `${emoji} ${signal.symbol}: ${signal.type} (%${signal.confidence})`;
+        showToast(msg, signal.type === 'AL' ? 'success' : 'error');
+        // Dashboard sinyal panelini de guncelle
+        if (typeof loadDashboardSignals === 'function') loadDashboardSignals();
+      });
+
+      socket.on('disconnect', () => {
+        console.log('[WS] Bağlantı koptu — yeniden bağlanıyor...');
+        // Fallback: 60 saniyede bir API'den çek
+        setTimeout(() => {
+          if (!socket.connected) updateBistIndicator();
+        }, 10000);
+      });
+
+      // Socket referansını sakla
+      window._wsSocket = socket;
+    } catch (e) {
+      console.log('[WS] Socket.IO yüklenemedi, polling kullanılıyor:', e.message);
+      // Fallback: 60 saniyede bir polling
+      setInterval(updateBistIndicator, 60000);
+    }
+  }
+
   // --- BIST Indicator & Live Dashboard Prices ---
   async function updateBistIndicator() {
     try {
@@ -1124,7 +1336,29 @@ window.StockPilot = (function () {
           if (chg) {
             const prefix = data.xu100.degisim >= 0 ? '+' : '';
             chg.textContent = `${prefix}${data.xu100.degisim_yuzde.toFixed(2)}%`;
-            chg.className = `bist-change ${data.xu100.degisim >= 0 ? 'up' : 'down'}`;
+            chg.className = `sp-ticker-change ${data.xu100.degisim >= 0 ? 'up' : 'down'}`;
+          }
+        }
+        // Topbar USD/TRY
+        if (data.usdtry) {
+          const uv = document.getElementById('usdValue');
+          const uc = document.getElementById('usdChange');
+          if (uv) uv.textContent = '₺' + formatNumber(data.usdtry.deger);
+          if (uc) {
+            const prefix = data.usdtry.degisim >= 0 ? '+' : '';
+            uc.textContent = `${prefix}${data.usdtry.degisim_yuzde.toFixed(2)}%`;
+            uc.className = `sp-ticker-change ${data.usdtry.degisim >= 0 ? 'up' : 'down'}`;
+          }
+        }
+        // Topbar ALTIN
+        if (data.altin) {
+          const gv = document.getElementById('goldValue');
+          const gc = document.getElementById('goldChange');
+          if (gv) gv.textContent = '₺' + formatNumber(data.altin.deger);
+          if (gc) {
+            const prefix = data.altin.degisim >= 0 ? '+' : '';
+            gc.textContent = `${prefix}${data.altin.degisim_yuzde.toFixed(2)}%`;
+            gc.className = `sp-ticker-change ${data.altin.degisim >= 0 ? 'up' : 'down'}`;
           }
         }
         

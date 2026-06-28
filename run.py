@@ -1,13 +1,15 @@
 """
 StockPilot - Uygulama Baslatici
-Bagimlilikları yukler ve Flask sunucusunu baslatir.
+Dev: pywebview masaustu | Prod: Flask/SocketIO sunucu
 """
 
 import subprocess
 import sys
 import os
+import threading
+import time
 
-# Konsolsuz (Windowed) modda çökmesini önlemek ve hataları yakalamak için log dosyası oluşturalım
+# Konsolsuz modda hata log
 if sys.stdout is None or hasattr(sys, '_MEIPASS'):
     try:
         exe_dir = os.path.dirname(sys.executable) if hasattr(sys, '_MEIPASS') else os.path.dirname(os.path.abspath(__file__))
@@ -19,65 +21,72 @@ if sys.stdout is None or hasattr(sys, '_MEIPASS'):
         sys.stderr = open(os.devnull, 'w')
 
 def main():
+    # .env dosyasindan ortam degiskenlerini yukle
+    env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+    if os.path.exists(env_file):
+        with open(env_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    k, v = line.split('=', 1)
+                    os.environ.setdefault(k.strip(), v.strip())
+    
     is_packaged = hasattr(sys, '_MEIPASS')
+    is_prod = os.environ.get('STOCKPILOT_PROD', '').lower() in ('1', 'true', 'yes')
     backend_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'backend')
     req_file = os.path.join(backend_dir, 'requirements.txt')
 
-    # Bagimlilikları yukle
     print("=" * 60)
     print("  StockPilot - BIST Hisse Analiz Botu")
+    print(f"  Mod: {'PROD (sunucu)' if is_prod else 'DEV (masaustu)'}")
     print("=" * 60)
     print()
 
-    if not is_packaged:
+    if not is_packaged and not is_prod:
         print("[*] Bagimliliklar yukleniyor...")
         try:
             subprocess.check_call(
                 [sys.executable, '-m', 'pip', 'install', '-r', req_file, '-q'],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
             print("[OK] Bagimliliklar basariyla yuklendi.")
         except subprocess.CalledProcessError as e:
             print(f"[HATA] Bagimlilik yukleme hatasi: {e}")
-            print("   Manuel olarak deneyin: pip install -r backend/requirements.txt")
             sys.exit(1)
         print()
 
     print("[*] StockPilot baslatiliyor...")
     print()
 
-    # Backend klasorunu Python path'ine ekle ve uygulamayi baslat
     if is_packaged:
         sys.path.insert(0, os.path.join(sys._MEIPASS, 'backend'))
     else:
         sys.path.insert(0, backend_dir)
 
-    import threading
-    import time
-    import webview
-    
-    from app import app
+    from app import app, socketio
+    from telegram_depth import start_telegram_listener
 
-    # Flask sunucusunu arka planda çalıştıralım
-    def run_flask():
-        app.run(debug=False, port=5000, host='127.0.0.1', use_reloader=False)
+    # Telegram baslat
+    start_telegram_listener()
 
-    threading.Thread(target=run_flask, daemon=True).start()
-    
-    # Sunucunun boot edilmesi için 1 saniye bekleyelim
-    time.sleep(1.0)
+    if is_prod:
+        # === PROD: Flask + SocketIO (gunicorn uyumlu) ===
+        socketio.run(app, debug=False, port=5000, host='0.0.0.0', allow_unsafe_werkzeug=True)
+    else:
+        # === DEV: pywebview masaustu ===
+        def run_flask():
+            socketio.run(app, debug=False, port=5000, host='127.0.0.1', allow_unsafe_werkzeug=True)
+        threading.Thread(target=run_flask, daemon=True).start()
+        time.sleep(1.0)
 
-    # Yerel masaüstü penceresini başlatalım
-    webview.create_window(
-        "StockPilot — Borsa İstanbul Analiz Platformu",
-        "http://localhost:5000",
-        width=1280,
-        height=800,
-        resizable=True,
-        min_size=(1024, 700)
-    )
-    webview.start(debug=True)
+        import webview
+        webview.create_window(
+            "StockPilot — Borsa Istanbul Analiz Platformu",
+            "http://localhost:5000",
+            width=1280, height=800,
+            resizable=True, min_size=(1024, 700)
+        )
+        webview.start(debug=True)
 
 
 if __name__ == '__main__':

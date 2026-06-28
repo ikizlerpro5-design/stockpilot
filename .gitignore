@@ -9,6 +9,8 @@ build/
 dist/
 .env
 *.log
+*.session
+*.session-journal
 stockpilot_debug.log
 .venv/
 venv/

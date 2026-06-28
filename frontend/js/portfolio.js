@@ -30,6 +30,48 @@ window.StockPilotPortfolio = (function () {
         <div class="section-header">
           <h2 class="section-title"><span class="icon">💼</span> Portföyüm</h2>
         </div>
+
+        <!-- K/Z Hesaplayıcı -->
+        <div class="glass-card pnl-calculator mb-24">
+          <div class="pnl-calc-header">
+            <span class="pnl-calc-title">🧮 Kar/Zarar Hesaplayıcı</span>
+            <span class="pnl-calc-badge">Anlık</span>
+          </div>
+          <div class="pnl-calc-grid">
+            <div class="pnl-calc-field">
+              <label>Hisse</label>
+              <select id="pnlSymbol" class="pnl-select" onchange="window.StockPilotPortfolio.calcPnL()">
+                <option value="">Seçiniz</option>
+              </select>
+            </div>
+            <div class="pnl-calc-field">
+              <label>Alış Fiyatı (₺)</label>
+              <input type="number" id="pnlBuyPrice" class="pnl-input" placeholder="0.00" step="0.01" oninput="window.StockPilotPortfolio.calcPnL()">
+            </div>
+            <div class="pnl-calc-field">
+              <label>Lot Adedi</label>
+              <input type="number" id="pnlLots" class="pnl-input" placeholder="0" step="1" value="1" oninput="window.StockPilotPortfolio.calcPnL()">
+            </div>
+            <div class="pnl-calc-field">
+              <label>Komisyon (%)</label>
+              <input type="number" id="pnlCommission" class="pnl-input" placeholder="0.2" step="0.01" value="0.2" oninput="window.StockPilotPortfolio.calcPnL()">
+            </div>
+          </div>
+          <div class="pnl-calc-results" id="pnlResults">
+            <div class="pnl-result-item">
+              <span class="pnl-result-label">Toplam Maliyet</span>
+              <span class="pnl-result-val" id="pnlCost">—</span>
+            </div>
+            <div class="pnl-result-item">
+              <span class="pnl-result-label">Güncel Değer</span>
+              <span class="pnl-result-val" id="pnlCurrent">—</span>
+            </div>
+            <div class="pnl-result-item highlight">
+              <span class="pnl-result-label">Kar / Zarar</span>
+              <span class="pnl-result-val" id="pnlTotal">—</span>
+            </div>
+          </div>
+        </div>
         
         <!-- Loading state -->
         <div id="portfolio-loading">
@@ -45,7 +87,61 @@ window.StockPilotPortfolio = (function () {
       </div>
     `;
 
+    // PnL hesaplayıcı için hisse listesini doldur
+    populatePnLSymbols();
     fetchAndRenderData();
+  }
+
+  function populatePnLSymbols() {
+    const stocks = [
+      'THYAO','ASELS','GARAN','EREGL','SISE','KCHOL','TUPRS','SAHOL',
+      'AKBNK','YKBNK','BIMAS','TCELL','PGSUS','TAVHL','SASA','HEKTS',
+      'KOZAL','PETKM','TTKOM','FROTO','TOASO','VESTL','ENKAI','ISCTR'
+    ];
+    const sel = document.getElementById('pnlSymbol');
+    if (!sel) return;
+    stocks.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s;
+      opt.textContent = s;
+      sel.appendChild(opt);
+    });
+  }
+
+  async function calcPnL() {
+    const symbol = document.getElementById('pnlSymbol')?.value;
+    const buyPrice = parseFloat(document.getElementById('pnlBuyPrice')?.value) || 0;
+    const lots = parseInt(document.getElementById('pnlLots')?.value) || 1;
+    const commission = parseFloat(document.getElementById('pnlCommission')?.value) || 0;
+
+    if (!symbol || buyPrice <= 0) {
+      document.getElementById('pnlCost').textContent = '—';
+      document.getElementById('pnlCurrent').textContent = '—';
+      document.getElementById('pnlTotal').textContent = '—';
+      return;
+    }
+
+    const totalCost = (buyPrice * lots) * (1 + commission / 100);
+    document.getElementById('pnlCost').textContent = '₺' + totalCost.toLocaleString('tr-TR', {minimumFractionDigits:2, maximumFractionDigits:2});
+
+    try {
+      const res = await fetch(`/api/quick-analysis/${symbol}`);
+      const data = await res.json();
+      if (data.success && data.fiyat > 0) {
+        const currentValue = data.fiyat * lots * (1 - commission / 100);
+        const pnl = currentValue - totalCost;
+        const pnlPct = (pnl / totalCost) * 100;
+        
+        document.getElementById('pnlCurrent').textContent = '₺' + currentValue.toLocaleString('tr-TR', {minimumFractionDigits:2, maximumFractionDigits:2});
+        
+        const pnlEl = document.getElementById('pnlTotal');
+        const sign = pnl >= 0 ? '+' : '';
+        pnlEl.textContent = `${sign}₺${pnl.toLocaleString('tr-TR', {minimumFractionDigits:2, maximumFractionDigits:2})} (${sign}%${pnlPct.toFixed(2)})`;
+        pnlEl.className = 'pnl-result-val ' + (pnl >= 0 ? 'up' : 'down');
+      }
+    } catch (e) {
+      document.getElementById('pnlCurrent').textContent = 'Hata';
+    }
   }
 
   /**
@@ -362,6 +458,7 @@ window.StockPilotPortfolio = (function () {
 
   return {
     renderPortfolioPage,
+    calcPnL,
     handleAdd,
     handleDelete,
     refresh: fetchAndRenderData

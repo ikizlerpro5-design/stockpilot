@@ -1,5 +1,10 @@
 flask>=3.0
 flask-cors>=4.0
+flask-socketio>=5.3
+simple-websocket>=1.0
+finnhub-python>=2.4
+telethon>=1.36
+cryptg>=0.4
 yfinance>=0.2.40
 pandas>=2.0
 numpy>=1.24

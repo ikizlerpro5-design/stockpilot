@@ -7,8 +7,13 @@ import os
 import sys
 from datetime import datetime, date
 import urllib.parse
+import threading
+import time
+import json
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
+from flask_socketio import SocketIO, emit
+import finnhub
 import yfinance as yf
 import pandas as pd
 
@@ -16,6 +21,14 @@ import pandas as pd
 from technical_analysis import analyze as run_technical_analysis
 from sentiment_analysis import analyze_sentiment
 from recommendation_engine import generate_recommendation
+from telegram_depth import start_telegram_listener, get_depth_data, get_depth_photo, get_all_depth_symbols, trigger_fetch, set_priority_symbol, analyze_depth
+from signal_engine import (
+    start_signal_engine, get_live_signals, get_signal_history,
+    get_watchlist as get_signal_watchlist,
+    add_to_watchlist as signal_add_watchlist,
+    remove_from_watchlist as signal_remove_watchlist,
+    set_socketio
+)
 from database import (
     init_db, add_to_history, get_history,
     add_to_watchlist, remove_from_watchlist, get_watchlist,
@@ -31,9 +44,10 @@ def _get_static_folder():
     return os.path.abspath(os.path.join(os.path.dirname(__file__), '../frontend'))
 
 app = Flask(__name__, static_folder=_get_static_folder(), static_url_path='')
-app.config['JSON_AS_ASCII'] = False  # Türkçe karakterler için UTF-8
+app.config['JSON_AS_ASCII'] = False
 app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'stockpilot-bist-analiz-gizli-anahtar-2024')
-CORS(app, origins=['*'])  # Web deployment için tüm originlere izin ver
+CORS(app, origins=['*'])
+socketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading')
 
 # Tüm yanıtlara UTF-8 charset ekle (statik dosyalar için kritik)
 @app.after_request
@@ -193,6 +207,9 @@ def index():
     """Ana sayfa - frontend'i sun."""
     response = send_from_directory(app.static_folder, 'index.html')
     response.headers['Content-Type'] = 'text/html; charset=utf-8'
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
     return response
 
 
@@ -209,10 +226,15 @@ def serve_static(path):
             response.headers['Content-Type'] = 'text/css; charset=utf-8'
         elif path.endswith('.js'):
             response.headers['Content-Type'] = 'application/javascript; charset=utf-8'
+        # Cache'i engelle — her zaman güncel dosyayı al
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
         return response
     # SPA desteği: dosya bulunamazsa index.html döndür
     response = send_from_directory(app.static_folder, 'index.html')
     response.headers['Content-Type'] = 'text/html; charset=utf-8'
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     return response
 
 
@@ -236,6 +258,108 @@ def api_log_error():
         return _make_json_response({"success": True})
     except Exception as e:
         return _make_json_response({"success": False, "error": str(e)}), 400
+
+
+# ==================== Telegram Derinlik API ====================
+
+@app.route('/api/depth/<symbol>')
+def api_depth(symbol):
+    """
+    Telegram Veri Terminali'nden emir defteri (derinlik) verisi.
+    
+    URL: GET /api/depth/THYAO
+    """
+    data = get_depth_data(symbol.upper())
+    if data:
+        return _make_json_response({"success": True, "symbol": symbol.upper(), "depth": data})
+    return _make_json_response({
+        "success": False,
+        "symbol": symbol.upper(),
+        "error": "Henüz derinlik verisi alınamadı. Telegram dinleyici bekliyor."
+    })
+
+
+@app.route('/api/depth/symbols')
+def api_depth_symbols():
+    """Takip edilen tüm derinlik sembollerini listele."""
+    symbols = get_all_depth_symbols()
+    return _make_json_response({"success": True, "symbols": symbols, "count": len(symbols)})
+
+
+@app.route('/api/depth/fetch/<symbol>', methods=['POST'])
+def api_depth_fetch(symbol):
+    """Manuel derinlik cekme tetikleyici + oncelik ver."""
+    if not symbol:
+        return _make_json_response({"success": False, "error": "Sembol gerekli"})
+    trigger_fetch(symbol)
+    return _make_json_response({"success": True, "symbol": symbol.upper(), "message": "Fetch tetiklendi, oncelik verildi"})
+
+
+@app.route('/api/depth/analyze/<symbol>')
+def api_depth_analyze(symbol):
+    """Derinlik verisini AI analizi ile yorumla."""
+    if not symbol:
+        return _make_json_response({"success": False, "error": "Sembol gerekli"})
+    result = analyze_depth(symbol.upper())
+    return _make_json_response({"success": True, "symbol": symbol.upper(), "analysis": result})
+
+
+@app.route('/api/depth/priority/<symbol>', methods=['POST'])
+def api_depth_priority(symbol):
+    """Bir hisseye oncelik ver (kullanici analiz sayfasina girdiginde)."""
+    set_priority_symbol(symbol)
+    return _make_json_response({"success": True, "symbol": symbol.upper(), "message": "Oncelik verildi, 3sn'de bir yenilenecek"})
+
+
+@app.route('/api/depth/photo/<symbol>')
+def api_depth_photo(symbol):
+    """Derinlik fotoğrafını base64 PNG olarak döndür."""
+    if not symbol:
+        return _make_json_response({"success": False, "error": "Sembol gerekli"})
+    b64 = get_depth_photo(symbol.upper())
+    if b64:
+        return _make_json_response({"success": True, "symbol": symbol.upper(), "photo": b64, "mime": "image/png"})
+    return _make_json_response({"success": False, "symbol": symbol.upper(), "error": "Fotoğraf henüz alınmadı"})
+
+
+# ==================== Signal & Watchlist API ====================
+
+@app.route('/api/signals/live')
+def api_signals_live():
+    """Anlik al/sat sinyallerini dondur (watchlist'teki hisseler icin)."""
+    signals = get_live_signals()
+    return _make_json_response({"success": True, "signals": signals, "count": len(signals)})
+
+
+@app.route('/api/signals/history')
+def api_signals_history():
+    """Sinyal gecmisi (son N adet)."""
+    count = request.args.get('count', 50, type=int)
+    history = get_signal_history(count)
+    return _make_json_response({"success": True, "history": history, "count": len(history)})
+
+
+@app.route('/api/watchlist', methods=['GET', 'POST', 'DELETE'])
+def api_watchlist():
+    """Watchlist yonetimi."""
+    if request.method == 'GET':
+        wl = get_signal_watchlist()
+        return _make_json_response({"success": True, "watchlist": wl, "count": len(wl)})
+    
+    data = request.get_json(silent=True) or {}
+    symbol = (data.get('symbol', '') or '').upper().strip()
+    
+    if not symbol:
+        return _make_json_response({"success": False, "error": "Sembol gerekli"})
+    
+    if request.method == 'POST':
+        ok = signal_add_watchlist(symbol)
+        return _make_json_response({"success": ok, "symbol": symbol, "message": "Eklendi" if ok else "Zaten var"})
+    
+    if request.method == 'DELETE':
+        ok = signal_remove_watchlist(symbol)
+        return _make_json_response({"success": ok, "symbol": symbol, "message": "Silindi" if ok else "Bulunamadi"})
+
 
 @app.route('/api/analyze/<symbol>')
 def api_analyze(symbol):
@@ -1469,6 +1593,66 @@ def api_funds():
         }, 500)
 
 
+@app.route('/api/compare')
+def api_compare():
+    """
+    Hisse karşılaştırma — 2-3 hisseyi yan yana analiz eder.
+
+    URL: GET /api/compare?symbols=THYAO,ASELS,EREGL
+    """
+    try:
+        symbols_param = request.args.get('symbols', '')
+        if not symbols_param:
+            return _make_json_response({"success": False, "error": "symbols parametresi gerekli"}, 400)
+        
+        symbols = [s.strip().upper() for s in symbols_param.split(',') if s.strip()]
+        if len(symbols) < 2 or len(symbols) > 3:
+            return _make_json_response({"success": False, "error": "2-3 hisse karşılaştırılabilir"}, 400)
+        
+        results = []
+        for sym in symbols:
+            sym_full = _ensure_suffix(sym)
+            stock_name = _get_stock_name(sym_full)
+            
+            # Hızlı analiz
+            technical = run_technical_analysis(sym_full, period="6mo")
+            sentiment = analyze_sentiment(sym_full)
+            rec = generate_recommendation(sym_full, technical, sentiment)
+            
+            fiyat = technical.get("fiyat", {})
+            rsi = technical.get("rsi", {})
+            macd = technical.get("macd", {})
+            hacim = technical.get("hacim", {})
+            
+            results.append({
+                "symbol": sym,
+                "isim": stock_name,
+                "logo_url": _get_logo_url(sym_full),
+                "fiyat": fiyat.get("guncel_fiyat", 0),
+                "degisim": fiyat.get("degisim", 0),
+                "degisim_yuzde": fiyat.get("degisim_yuzde", 0),
+                "aksiyon": rec.get("aksiyon", "TUT"),
+                "skor": rec.get("skor", 50),
+                "guven": rec.get("guven", 0),
+                "rsi": rsi.get("deger", 50),
+                "rsi_sinyal": rsi.get("sinyal", ""),
+                "macd_sinyal": macd.get("yorum", ""),
+                "hacim": hacim.get("guncel", 0),
+                "hacim_sinyal": hacim.get("sinyal", ""),
+                "hedef_1": rec.get("fiyat_hedefleri", {}).get("hedef_1", 0),
+                "stop_loss": rec.get("fiyat_hedefleri", {}).get("stop_loss", 0),
+            })
+        
+        return _make_json_response({
+            "success": True,
+            "karsilastirma": results,
+            "tarih": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        })
+    
+    except Exception as e:
+        return _make_json_response({"success": False, "error": str(e)}, 500)
+
+
 @app.route('/api/health')
 def api_health():
     """Health check endpoint - deployment monitoring için."""
@@ -1510,11 +1694,152 @@ def method_not_allowed(e):
     }, 405)
 
 
+# ==================== WEBSOCKET — Finnhub Gerçek Zamanlı Veri ====================
+
+FINNHUB_KEY = os.environ.get('FINNHUB_KEY', 'd8vu9f9r01qp5hrlvii0d8vu9f9r01qp5hrlviig')
+finnhub_client = finnhub.Client(api_key=FINNHUB_KEY)
+
+# Canlı fiyat cache'i (Finnhub WebSocket'ten gelen son veriler)
+_live_prices = {
+    'bist': {'deger': None, 'degisim_yuzde': 0},
+    'usd': {'deger': None, 'degisim_yuzde': 0},
+    'eur': {'deger': None, 'degisim_yuzde': 0},
+    'altin': {'deger': None, 'degisim_yuzde': 0},
+    'son_guncelleme': None
+}
+
+# Takip edilecek BIST sembolleri
+_TRACKED_SYMBOLS = [
+    'XU100.IS',      # BIST 100 endeksi
+    'USDTRY=X',      # USD/TRY (yfinance'den — Finnhub forex desteği sınırlı)
+    'EURTRY=X',      # EUR/TRY
+    'GAUTRY=X',      # Gram Altın / TRY
+    'THYAO.IS', 'ASELS.IS', 'GARAN.IS', 'EREGL.IS',
+    'KCHOL.IS', 'AKBNK.IS', 'BIMAS.IS', 'TUPRS.IS'
+]
+
+def _finnhub_websocket_broadcast():
+    """Finnhub WebSocket — gerçek zamanlı fiyat akışı."""
+    import websocket as ws
+    
+    def on_message(ws_instance, message):
+        try:
+            data = json.loads(message)
+            if data.get('type') == 'trade':
+                for item in data.get('data', []):
+                    symbol = item.get('s', '')
+                    price = item.get('p', 0)
+                    
+                    # Sembole göre cache güncelle
+                    if 'XU100' in symbol:
+                        _live_prices['bist']['deger'] = price
+                    elif 'USDTRY' in symbol or 'USD' in symbol.upper():
+                        _live_prices['usd']['deger'] = price
+                    elif 'EURTRY' in symbol:
+                        _live_prices['eur']['deger'] = price
+                    elif 'GAUTRY' in symbol or 'XAU' in symbol:
+                        _live_prices['altin']['deger'] = price
+                    
+                    _live_prices['son_guncelleme'] = datetime.now().strftime('%H:%M:%S')
+            
+            # Client'lara güncel veriyi yayınla
+            socketio.emit('market_update', {
+                'bist': _live_prices['bist'],
+                'usd': _live_prices['usd'],
+                'eur': _live_prices['eur'],
+                'altin': _live_prices['altin'],
+                'saat': _live_prices['son_guncelleme'] or datetime.now().strftime('%H:%M:%S')
+            })
+        except Exception:
+            pass
+
+    def on_open(ws_instance):
+        # BIST hisselerine abone ol
+        for sym in _TRACKED_SYMBOLS:
+            if '.IS' in sym:
+                ws_instance.send(json.dumps({
+                    'type': 'subscribe',
+                    'symbol': sym.replace('.IS', '')
+                }))
+
+    def on_error(ws_instance, error):
+        print(f"[Finnhub WS] Hata: {error}")
+
+    # Finnhub WebSocket'e bağlan
+    try:
+        ws_app = ws.WebSocketApp(
+            f"wss://ws.finnhub.io?token={FINNHUB_KEY}",
+            on_message=on_message,
+            on_open=on_open,
+            on_error=on_error
+        )
+        ws_app.run_forever()
+    except Exception as e:
+        print(f"[Finnhub WS] Bağlantı hatası: {e}")
+
+
+def _fallback_polling_broadcast():
+    """Yedek: yfinance ile 10 saniyede bir veri çek (Finnhub bağlanamazsa)."""
+    while True:
+        try:
+            bist = yf.Ticker("XU100.IS")
+            bist_info = bist.info if bist.info else {}
+            bist_price = bist_info.get('regularMarketPrice') or bist_info.get('previousClose')
+            bist_change = bist_info.get('regularMarketChangePercent', 0) or 0
+            
+            usd_ticker = yf.Ticker("USDTRY=X")
+            eur_ticker = yf.Ticker("EURTRY=X")
+            gold_ticker = yf.Ticker("GAUTRY=X")
+            
+            usd_info = usd_ticker.info if usd_ticker.info else {}
+            eur_info = eur_ticker.info if eur_ticker.info else {}
+            gold_info = gold_ticker.info if gold_ticker.info else {}
+            
+            usd_price = usd_info.get('regularMarketPrice') or usd_info.get('previousClose')
+            eur_price = eur_info.get('regularMarketPrice') or eur_info.get('previousClose')
+            gold_price = gold_info.get('regularMarketPrice') or gold_info.get('previousClose')
+            usd_chg = usd_info.get('regularMarketChangePercent', 0) or 0
+            eur_chg = eur_info.get('regularMarketChangePercent', 0) or 0
+            gold_chg = gold_info.get('regularMarketChangePercent', 0) or 0
+            
+            if any([bist_price, usd_price, eur_price, gold_price]):
+                socketio.emit('market_update', {
+                    'bist': {'deger': bist_price or 10000, 'degisim_yuzde': bist_change},
+                    'usd': {'deger': usd_price or 46, 'degisim_yuzde': usd_chg},
+                    'eur': {'deger': eur_price or 53, 'degisim_yuzde': eur_chg},
+                    'altin': {'deger': gold_price or 6100, 'degisim_yuzde': gold_chg},
+                    'saat': datetime.now().strftime('%H:%M:%S')
+                })
+        except Exception as e:
+            print(f"[Fallback] Broadcast hatası: {e}")
+        
+        time.sleep(10)
+
+
 # ==================== Uygulama Başlatma ====================
 
 if __name__ == '__main__':
     print("=" * 60)
     print("  StockPilot - BIST Hisse Analiz Botu")
     print("  http://localhost:5000 adresinde çalışıyor")
+    print("  Finnhub WebSocket: AKTIF (gercek zamanli)")
+    print("  Telegram Derinlik: Baslatiliyor...")
+    print("  Sinyal Motoru: Baslatiliyor...")
     print("=" * 60)
-    app.run(debug=True, port=5000, host='0.0.0.0')
+    
+    # Telegram derinlik dinleyicisini başlat
+    start_telegram_listener()
+    
+    # Sinyal motorunu başlat (derinlikten al/sat sinyalleri)
+    set_socketio(socketio)  # SocketIO referansini enjekte et
+    start_signal_engine()
+    
+    # Finnhub WebSocket'i arka planda başlat (gerçek zamanlı)
+    finnhub_thread = threading.Thread(target=_finnhub_websocket_broadcast, daemon=True)
+    finnhub_thread.start()
+    
+    # Yedek: yfinance polling (Finnhub bağlanamazsa)
+    fallback_thread = threading.Thread(target=_fallback_polling_broadcast, daemon=True)
+    fallback_thread.start()
+    
+    socketio.run(app, debug=True, port=5000, host='0.0.0.0', allow_unsafe_werkzeug=True)

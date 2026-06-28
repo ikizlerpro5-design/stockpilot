@@ -1,9 +1,14 @@
 flask>=3.0
 flask-cors>=4.0
+flask-socketio>=5.0
 yfinance>=0.2.40
 pandas>=2.0
 numpy>=1.24
-vaderSentiment>=3.3
+pytesseract
+Pillow>=3.3
 requests>=2.31
 gunicorn>=22.0
-pywebview  # sadece masaustu icin, web'de yuklenmezse sorun olmaz
+finnhub-python>=2.4
+telethon>=1.36
+cryptg
+pywebview  # sadece masaustu (Windows), VDS'te yuklenmezse sorun olmaz

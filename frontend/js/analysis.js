@@ -24,7 +24,7 @@ window.StockPilotAnalysis = (function () {
     const risk = data.risk || '—';
 
     container.innerHTML = `
-      <!-- ===== HERO HEADER ===== -->
+      <!-- ===== HERO + VERDICT (compact) ===== -->
       <div class="an-hero glass-card-static anim-fade-in">
         <div class="an-hero-identity">
           ${renderLogo(data)}
@@ -40,49 +40,14 @@ window.StockPilotAnalysis = (function () {
             <span>(${changeUp ? '+' : ''}${(data.changePercent || 0).toFixed(2)}%)</span>
           </div>
         </div>
-      </div>
-
-      <!-- ===== VERDICT BAR ===== -->
-      <div class="an-verdict-bar anim-fade-in stagger-1">
-        <div class="an-chip">
-          <span class="an-chip-label">Sinyal</span>
+        <div class="an-hero-badges">
           <span class="badge badge-lg ${actionBadgeClass}">${data.action || 'TUT'}</span>
+          <span class="an-hero-score" style="color:${scoreColor}">Skor: ${Math.round(data.score)}</span>
         </div>
-        <div class="an-chip">
-          <span class="an-chip-label">Skor</span>
-          <span class="an-chip-value" style="color:${scoreColor}">${Math.round(data.score)}<small>/100</small></span>
-        </div>
-        <div class="an-chip">
-          <span class="an-chip-label">Güven</span>
-          <span class="an-chip-value">%${conf}</span>
-        </div>
-        <div class="an-chip">
-          <span class="an-chip-label">Risk</span>
-          <span class="an-chip-value ${getRiskClass(risk)}">${risk}</span>
-        </div>
-        <div class="an-chip an-chip-meta">
-          <span>🕒 ${data.tarih || '—'}</span>
-        </div>
-        <button class="an-method-toggle" onclick="window.StockPilotAnalysis.toggleMethodology()">
-          <span>ℹ️</span> Analiz Nasıl Yapıldı?
-        </button>
-      </div>
-
-      <!-- ===== METHODOLOGY (collapsible) ===== -->
-      <div id="methodologyDetails" class="an-method-panel glass-card-static anim-fade-in" style="display:none;">
-        <h4>💻 Analiz Metodolojisi &amp; Algoritması</h4>
-        <p>Bu analiz, sayısal piyasa verileri ve internet haber akışını birleştiren hibrit bir puanlama algoritmasıyla üretilir:</p>
-        <ul>
-          <li><strong>Teknik Göstergeler:</strong> RSI(14), MACD(12,26,9), Bollinger Bantları, Stochastic, ADX trend gücü ve SMA 50/200 konumları anlık hesaplanır.</li>
-          <li><strong>Akıllı Fiyat Hedefleri:</strong> Destek/direnç Pivot formülüyle; giriş/çıkış ve Stop-Loss mesafeleri 14 günlük <strong>ATR</strong> volatilitesinin 1.5 katıyla belirlenir.</li>
-          <li><strong>Fibonacci:</strong> Son 60 günlük swing yüksek/düşük üzerinden düzeltme oranları çıkarılır.</li>
-          <li><strong>Duygu Analizi:</strong> Google News RSS + forum yorumları <strong>VADER</strong> NLP modeliyle (-1…+1) puanlanır.</li>
-        </ul>
-        <button class="btn btn-ghost btn-sm" onclick="window.StockPilotAnalysis.toggleMethodology()">Anladım, Kapat</button>
       </div>
 
       <!-- ===== CHART ===== -->
-      <div class="an-section anim-fade-in stagger-2">
+      <div class="an-section anim-fade-in stagger-1">
         <div class="an-chart-toolbar">
           <span class="an-chart-title">📈 Fiyat Grafiği</span>
           <div class="an-period-group">
@@ -96,50 +61,28 @@ window.StockPilotAnalysis = (function () {
         <div class="an-chart" id="mainChart"></div>
       </div>
 
-      <!-- ===== VERDICT + REASONS ===== -->
-      <div class="an-verdict-grid an-section">
-        <div class="an-gauge-card glass-card-static anim-fade-in stagger-2">
-          <div class="an-gauge-wrap">
-            <canvas id="${gaugeId}" class="an-gauge-canvas" width="520" height="290"></canvas>
-            <div class="an-gauge-center">
-              <div class="an-gauge-score" style="color:${scoreColor}">${Math.round(data.score)}</div>
-              <span class="badge badge-lg ${actionBadgeClass}">${data.action || 'TUT'}</span>
-            </div>
+      <!-- ===== KEY METRICS: Gauge + Price Targets ===== -->
+      <div class="an-metrics-row anim-fade-in stagger-2">
+        <div class="an-gauge-mini glass-card-static">
+          <canvas id="${gaugeId}" class="an-gauge-canvas" width="300" height="180"></canvas>
+          <div class="an-gauge-center">
+            <div class="an-gauge-score" style="color:${scoreColor}">${Math.round(data.score)}</div>
+            <span class="badge ${actionBadgeClass}">${data.action || 'TUT'}</span>
           </div>
-          <div class="an-gauge-scale">
-            <span>Güçlü SAT</span><span>Nötr</span><span>Güçlü AL</span>
-          </div>
-          <div class="an-confidence">
-            <div class="an-confidence-head">
-              <span>Güven Oranı</span>
-              <span style="color:${scoreColor}">%${conf}</span>
-            </div>
-            <div class="an-confidence-track">
-              <div class="an-confidence-fill" style="width:${conf}%; background:${scoreColor}"></div>
-            </div>
-          </div>
-          <button class="btn btn-primary an-watchlist-btn" onclick="window.StockPilot.addToWatchlist('${data.symbol}')">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z"></path></svg>
-            Takip Listesine Ekle
-          </button>
         </div>
-
-        <div class="an-reasons anim-fade-in stagger-3">
-          <div class="an-reason-card buy">
-            <div class="an-reason-head"><span class="an-reason-icon">✅</span> Alım Gerekçeleri</div>
-            <div class="an-reason-list">${renderReasons(data.buyReasons, 'buy')}</div>
-          </div>
-          <div class="an-reason-card sell">
-            <div class="an-reason-head"><span class="an-reason-icon">⚠️</span> Risk &amp; Satış Gerekçeleri</div>
-            <div class="an-reason-list">${renderReasons(data.sellReasons, 'sell')}</div>
+        <div class="an-targets-mini glass-card-static">
+          <div class="section-header"><h2 class="section-title"><span class="icon">🎯</span> Fiyat Hedefleri</h2></div>
+          ${renderPriceTargets(data.priceTargets, data.price)}
+          <div style="margin-top:12px;font-size:0.7rem;color:var(--text-muted)">
+            Risk: <b class="${getRiskClass(risk)}">${risk}</b> &nbsp;|&nbsp; Güven: <b>%${conf}</b> &nbsp;|&nbsp; 🕒 ${data.tarih || '—'}
           </div>
         </div>
       </div>
 
-      <!-- ===== PRICE TARGETS ===== -->
-      <div class="an-section anim-fade-in stagger-3">
-        <div class="section-header"><h2 class="section-title"><span class="icon">🎯</span> Giriş / Çıkış &amp; Fiyat Hedefleri</h2></div>
-        ${renderPriceTargets(data.priceTargets, data.price)}
+      <!-- ===== DEPTH / DERINLIK ===== -->
+      <div class="an-section anim-fade-in stagger-3" id="depthSection">
+        <div class="section-header"><h2 class="section-title"><span class="icon">📚</span> Emir Defteri — 25 Kademe Derinlik</h2></div>
+        <div id="depthContent"><div class="an-empty-inline">⏳ Derinlik verisi yükleniyor...</div></div>
       </div>
 
       <!-- ===== TECHNICAL INDICATORS ===== -->
@@ -153,18 +96,33 @@ window.StockPilotAnalysis = (function () {
         <div class="section-header"><h2 class="section-title"><span class="icon">📐</span> Destek, Direnç &amp; Fibonacci</h2></div>
         <div class="an-sr-grid">
           <div class="glass-card-static">
-            <h3 class="an-subhead">📐 Klasik Destek / Direnç Seviyeleri</h3>
+            <h3 class="an-subhead">📐 Klasik Destek / Direnç</h3>
             ${renderSupportResistance(data.supportResistance || {}, data.price)}
           </div>
           <div class="glass-card-static">
-            <h3 class="an-subhead">📈 Fibonacci Geri Çekilme Seviyeleri</h3>
+            <h3 class="an-subhead">📈 Fibonacci Geri Çekilme</h3>
             ${renderFibonacciTable(data.fibonacci || {})}
           </div>
         </div>
       </div>
 
-      <!-- ===== NEWS & SENTIMENT ===== -->
+      <!-- ===== REASONS ===== -->
       <div class="an-section anim-fade-in stagger-6">
+        <div class="section-header"><h2 class="section-title"><span class="icon">📋</span> Alım / Satım Gerekçeleri</h2></div>
+        <div class="an-reasons-row">
+          <div class="an-reason-card buy">
+            <div class="an-reason-head"><span class="an-reason-icon">✅</span> Alım Gerekçeleri</div>
+            <div class="an-reason-list">${renderReasons(data.buyReasons, 'buy')}</div>
+          </div>
+          <div class="an-reason-card sell">
+            <div class="an-reason-head"><span class="an-reason-icon">⚠️</span> Risk &amp; Satış Gerekçeleri</div>
+            <div class="an-reason-list">${renderReasons(data.sellReasons, 'sell')}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== NEWS & SENTIMENT ===== -->
+      <div class="an-section anim-fade-in stagger-7">
         <div class="section-header"><h2 class="section-title"><span class="icon">📰</span> Haberler &amp; Duyarlılık</h2></div>
         ${renderNewsSentiment(data.sentiment || {})}
       </div>
@@ -174,6 +132,7 @@ window.StockPilotAnalysis = (function () {
     requestAnimationFrame(() => {
       drawGauge(gaugeId, data.score, data.action);
       initChart(data);
+      loadDepthData(data.symbol);
     });
   }
 
@@ -500,6 +459,239 @@ window.StockPilotAnalysis = (function () {
         }).join('')}
       </div>
       ${currentPrice ? `<div class="an-sr-current">Mevcut Fiyat: <strong>₺${formatNumber(currentPrice)}</strong></div>` : ''}`;
+  }
+
+  /**
+   * Load depth data with priority + AI analysis + auto-refresh.
+   */
+  let _depthRefreshTimer = null;
+
+  function loadDepthData(symbol) {
+    // Onceki timer'i temizle
+    if (_depthRefreshTimer) clearInterval(_depthRefreshTimer);
+    
+    const container = document.getElementById('depthContent');
+    if (!container) return;
+
+    // Backend'e oncelik bildir
+    fetch(`/api/depth/priority/${symbol}`, { method: 'POST' }).catch(() => {});
+
+    function refresh() {
+      Promise.all([
+        fetch(`/api/depth/${symbol}`).then(r => r.json()),
+        fetch(`/api/depth/analyze/${symbol}`).then(r => r.json()),
+        fetch(`/api/depth/photo/${symbol}`).then(r => r.json()).catch(() => ({success:false}))
+      ])
+      .then(([depthRes, aiRes, photoRes]) => {
+        // Fotoğraf HTML'i
+        let photoHtml = '';
+        if (photoRes.success && photoRes.photo) {
+          photoHtml = `
+            <div class="depth-photo-wrap glass-card-static" style="margin-bottom:12px;overflow:hidden">
+              <div class="depth-photo-header" style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--glass-border)">
+                <span>📸 Telegram'dan Gelen Ham Derinlik Görüntüsü</span>
+                <button onclick="this.closest('.depth-photo-wrap').querySelector('img').style.display=this.closest('.depth-photo-wrap').querySelector('img').style.display==='none'?'block':'none';this.textContent=this.textContent==='Gizle'?'Göster':'Gizle'" style="font-size:0.7rem;background:var(--glass-bg);border:1px solid var(--glass-border);color:var(--text);padding:2px 8px;border-radius:4px;cursor:pointer">Gizle</button>
+              </div>
+              <img src="data:image/png;base64,${photoRes.photo}" style="width:100%;max-width:400px;display:block;margin:0 auto" alt="Derinlik Fotoğrafı" />
+            </div>`;
+        }
+
+        if (depthRes.success && depthRes.depth && (depthRes.depth.alis.length || depthRes.depth.satis.length)) {
+          const aiHtml = aiRes.success && aiRes.analysis
+            ? renderAIAnalysis(aiRes.analysis, depthRes.depth.symbol)
+            : '';
+          container.innerHTML = photoHtml + renderDepthTable(depthRes.depth, depthRes.depth.price) + aiHtml;
+        } else {
+          // Veri yoksa tetikle
+          if (!depthRes.success) {
+            fetch(`/api/depth/fetch/${symbol}`, { method: 'POST' }).catch(() => {});
+          }
+          container.innerHTML = photoHtml + '<div class="an-empty-inline">📡 Derinlik verisi cekiliyor... (3 sn\'de bir yenileniyor)</div>';
+        }
+      })
+      .catch(() => {
+        container.innerHTML = '<div class="an-empty-inline">⚠️ Derinlik verisi yuklenemedi.</div>';
+      });
+    }
+
+    // Ilk fetch hemen
+    refresh();
+    // 3 saniyede bir yenile (backend de ayni hizda cekiyor)
+    _depthRefreshTimer = setInterval(refresh, 3000);
+  }
+
+  /**
+   * Render AI depth analysis commentary.
+   */
+  function renderAIAnalysis(analysis, symbol) {
+    if (!analysis || !analysis.comment) return '';
+    
+    const vClass = analysis.verdict === 'al' ? 'depth-ai-buy'
+      : analysis.verdict === 'sat' ? 'depth-ai-sell' : 'depth-ai-neutral';
+    const vLabel = analysis.verdict === 'al' ? '🟢 ALICI'
+      : analysis.verdict === 'sat' ? '🔴 SATICI' : '⚖️ DENGELİ';
+    
+    const fmt = (n) => n >= 1000000 ? (n/1000000).toFixed(1)+'M' : n >= 1000 ? (n/1000).toFixed(0)+'K' : String(n);
+    const d = analysis.details || {};
+    
+    // Depth-based support/resistance + trading signal
+    let levelsHtml = '';
+    const sup = d.strongest_support;
+    const res = d.strongest_resistance;
+    const sig = analysis.signal;
+
+    if (sup || res || sig) {
+      levelsHtml = '<div class="depth-levels-row">';
+      if (sup) {
+        levelsHtml += `
+          <div class="depth-level-card support">
+            <div class="depth-level-label">📉 Kademe Desteği</div>
+            <div class="depth-level-price">₺${sup.price.toFixed(2)}</div>
+            <div class="depth-level-info">%${sup.distance_pct.toFixed(1)} aşağıda • ${fmt(sup.lot)} lot</div>
+          </div>`;
+      }
+      if (res) {
+        levelsHtml += `
+          <div class="depth-level-card resistance">
+            <div class="depth-level-label">📈 Kademe Direnci</div>
+            <div class="depth-level-price">₺${res.price.toFixed(2)}</div>
+            <div class="depth-level-info">%${res.distance_pct.toFixed(1)} yukarıda • ${fmt(res.lot)} lot</div>
+          </div>`;
+      }
+      levelsHtml += '</div>';
+    }
+
+    // Trading signal card
+    let signalHtml = '';
+    if (sig && sig.entry) {
+      const rrColor = sig.rr_ratio >= 2 ? 'var(--green)' : sig.rr_ratio >= 1 ? 'var(--accent)' : 'var(--red)';
+      signalHtml = `
+        <div class="depth-signal-row">
+          <div class="depth-signal-card">
+            <div class="depth-signal-label">🟢 GİRİŞ</div>
+            <div class="depth-signal-price">₺${sig.entry.toFixed(2)}</div>
+          </div>
+          <div class="depth-signal-card stop">
+            <div class="depth-signal-label">🛑 STOP</div>
+            <div class="depth-signal-price">₺${sig.stop.toFixed(2)}</div>
+            <div class="depth-signal-info">Risk: ₺${sig.risk_tl.toFixed(2)}</div>
+          </div>
+          <div class="depth-signal-card target">
+            <div class="depth-signal-label">🎯 HEDEF</div>
+            <div class="depth-signal-price">₺${sig.target.toFixed(2)}</div>
+            <div class="depth-signal-info">Ödül: ₺${sig.reward_tl.toFixed(2)}</div>
+          </div>
+          <div class="depth-signal-card rr">
+            <div class="depth-signal-label">📊 R/R</div>
+            <div class="depth-signal-price" style="color:${rrColor}">${sig.rr_ratio.toFixed(2)}</div>
+            <div class="depth-signal-info">${sig.suggested_lot || 100} lot öneri</div>
+          </div>
+        </div>`;
+    }
+    
+    return `
+      <div class="depth-ai-wrap glass-card-static ${vClass}">
+        <div class="depth-ai-header">
+          <span class="depth-ai-verdict">${vLabel}</span>
+          <span class="depth-ai-score">Kademe Skoru: ${analysis.score}/100</span>
+        </div>
+        <div class="depth-ai-comment">🧠 ${analysis.comment}</div>
+        ${levelsHtml}
+        ${signalHtml}
+        <div class="depth-ai-stats">
+          <div class="depth-ai-stat">
+            <span class="depth-ai-stat-val">${fmt(d.total_alis_lot || 0)}</span>
+            <span class="depth-ai-stat-lbl">Toplam Alış Lot</span>
+          </div>
+          <div class="depth-ai-stat">
+            <span class="depth-ai-stat-val">${fmt(d.total_satis_lot || 0)}</span>
+            <span class="depth-ai-stat-lbl">Toplam Satış Lot</span>
+          </div>
+          <div class="depth-ai-stat">
+            <span class="depth-ai-stat-val">₺${(d.spread || 0).toFixed(2)}</span>
+            <span class="depth-ai-stat-lbl">Spread</span>
+          </div>
+          <div class="depth-ai-stat">
+            <span class="depth-ai-stat-val">%${((d.alis_ratio || 0.5)*100).toFixed(0)}</span>
+            <span class="depth-ai-stat-lbl">Alış Oranı</span>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  /**
+   * Render depth/order book table.
+   */
+  function renderDepthTable(depth, price) {
+    const maxRows = Math.max(depth.alis.length, depth.satis.length, 1);
+    const priceStr = price ? `₺${price.toFixed(2)}` : '—';
+    
+    // Eger veri yoksa uyari goster
+    if (depth.alis.length === 0 && depth.satis.length === 0) {
+      return `
+        <div class="depth-table-wrap glass-card-static">
+          <div class="depth-header-row">
+            <span class="depth-symbol-badge">📊 ${depth.symbol || ''}</span>
+            <span class="depth-price-badge">${priceStr}</span>
+          </div>
+          <div class="an-empty-inline" style="margin:20px;text-align:center">
+            ⚠️ Bu hisse icin derinlik verisi henuz parse edilemedi.<br>
+            <small>OCR metni yetersiz — farkli bir hisse deneyin (THYAO, ASELS)</small>
+          </div>
+        </div>`;
+    }
+    
+    const fmtLot = (n) => {
+      if (n == null || n === 0) return '—';
+      if (n >= 1000000) return (n / 1000000).toFixed(2) + 'M';
+      if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+      return n.toLocaleString('tr-TR');
+    };
+
+    let rows = '';
+    for (let i = 0; i < maxRows; i++) {
+      const alisRow = depth.alis[i];
+      const satisRow = depth.satis[i];
+      const alisPrice = alisRow ? (Array.isArray(alisRow) ? alisRow[0] : alisRow).toFixed(2) : '';
+      const alisQty = alisRow ? (Array.isArray(alisRow) ? alisRow[1] : 0) : 0;
+      const satisPrice = satisRow ? (Array.isArray(satisRow) ? satisRow[0] : satisRow).toFixed(2) : '';
+      const satisQty = satisRow ? (Array.isArray(satisRow) ? satisRow[1] : 0) : 0;
+
+      rows += `
+        <tr>
+          <td class="depth-row-num">${i + 1}</td>
+          <td class="depth-qty-col">${alisPrice ? fmtLot(alisQty) : '—'}</td>
+          <td class="depth-alis-col">${alisPrice || '—'}</td>
+          <td class="depth-mid-col">${i === 0 ? priceStr : ''}</td>
+          <td class="depth-satis-col">${satisPrice || '—'}</td>
+          <td class="depth-qty-col">${satisPrice ? fmtLot(satisQty) : '—'}</td>
+        </tr>`;
+    }
+
+    return `
+      <div class="depth-table-wrap glass-card-static">
+        <div class="depth-header-row">
+          <span class="depth-symbol-badge">📊 ${depth.symbol || ''}</span>
+          <span class="depth-price-badge">${priceStr}</span>
+        </div>
+        <table class="depth-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Lot</th>
+              <th class="depth-alis-head">🟢 ALIŞ</th>
+              <th class="depth-mid-head">Fiyat</th>
+              <th class="depth-satis-head">🔴 SATIŞ</th>
+              <th>Lot</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <div class="depth-footer">
+          <span>📡 @ucretsizderinlikbot • 25 Kademe</span>
+          <span>${depth.alis.length} Alış / ${depth.satis.length} Satış</span>
+        </div>
+      </div>`;
   }
 
   /**
